@@ -37,21 +37,30 @@ run_once() {
     fi
 }
 
+is_running() {
+    [ -f "$PID_FILE" ] || return 1
+    PID=$(cat "$PID_FILE")
+    kill -0 "$PID" 2>/dev/null || return 1
+    ps -p "$PID" -o args= 2>/dev/null | grep -q "claude-pulse" || return 1
+    return 0
+}
+
 daemon_start() {
-    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    if is_running; then
         echo "Already running (PID $(cat "$PID_FILE")). Use --stop first."
         exit 1
     fi
+    rm -f "$PID_FILE"
     mkdir -p "$(dirname "$LOG_FILE")"
-    nohup "$0" > "$LOG_FILE" 2>&1 &
-    PID=$!
-    disown $PID
-    echo $PID > "$PID_FILE"
+    # subshell + setsid-equivalent: child is reparented to launchd on subshell exit
+    (nohup "$0" </dev/null >> "$LOG_FILE" 2>&1 & echo $! > "$PID_FILE")
+    sleep 0.2
+    PID=$(cat "$PID_FILE")
     echo "Started (PID $PID). Logs: $LOG_FILE"
 }
 
 daemon_stop() {
-    if [ ! -f "$PID_FILE" ] || ! kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    if ! is_running; then
         echo "Not running."
         rm -f "$PID_FILE"
         exit 0
@@ -66,7 +75,7 @@ daemon_stop() {
 }
 
 daemon_status() {
-    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    if is_running; then
         echo "Running (PID $(cat "$PID_FILE"))"
         echo ""
         tail -5 "$LOG_FILE" 2>/dev/null
