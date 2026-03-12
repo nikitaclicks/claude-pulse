@@ -1,0 +1,11 @@
+# claude-pulse configuration
+# Copy to ~/.config/claude-pulse/config and edit as needed.
+
+# How long a session stays "active" after its last message (seconds)
+CLAUDE_PULSE_WINDOW=1800   # 30 minutes
+
+# How often claude-status pushes to GitHub bio (seconds)
+CLAUDE_PULSE_INTERVAL=600  # 10 minutes
+
+# GitHub bio format — $COUNT is replaced with the active session count
+CLAUDE_PULSE_BIO="🤖 × \$COUNT Claude agents active"

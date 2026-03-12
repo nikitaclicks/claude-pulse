@@ -1,0 +1,134 @@
+#!/bin/bash
+# Update GitHub bio with active Claude session count.
+# Requires: gh CLI authenticated with 'user' scope
+# Usage: claude-pulse [--dry-run | --no-loop | --loop [interval_seconds] | -d | --stop | --status]
+# Default: run immediately, then loop on CLAUDE_PULSE_INTERVAL (10 min)
+
+# Load config (defaults first, then user config overrides)
+CLAUDE_PULSE_INTERVAL=600
+CLAUDE_PULSE_BIO="🤖 × \$COUNT Claude agents active"
+[ -f "$HOME/.config/claude-pulse/config" ] && source "$HOME/.config/claude-pulse/config"
+
+SESSION_FILE="/tmp/claude-active-sessions.txt"
+PID_FILE="/tmp/claude-pulse.pid"
+LOG_FILE="$HOME/.local/share/claude-pulse.log"
+
+clear_bio() {
+    echo ""
+    echo "Clearing GitHub bio..."
+    GITHUB_TOKEN="" gh api -X PATCH /user -f bio="" > /dev/null \
+        && echo "Bio cleared." \
+        || echo "Failed to clear bio." >&2
+    exit 0
+}
+
+run_once() {
+    COUNT=0
+    if [ -f "$SESSION_FILE" ]; then
+        COUNT=$(grep -oE '[0-9]+ active' "$SESSION_FILE" | grep -oE '^[0-9]+')
+        COUNT=${COUNT:-0}
+    fi
+
+    BIO=$(eval echo "$CLAUDE_PULSE_BIO")
+    if GITHUB_TOKEN="" gh api -X PATCH /user -f bio="$BIO" > /dev/null; then
+        echo "[$(date '+%H:%M:%S')] GitHub bio set to '$BIO'"
+    else
+        echo "[$(date '+%H:%M:%S')] Failed to update GitHub bio" >&2
+    fi
+}
+
+daemon_start() {
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "Already running (PID $(cat "$PID_FILE")). Use --stop first."
+        exit 1
+    fi
+    mkdir -p "$(dirname "$LOG_FILE")"
+    nohup "$0" > "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+    echo "Started (PID $!). Logs: $LOG_FILE"
+}
+
+daemon_stop() {
+    if [ ! -f "$PID_FILE" ] || ! kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "Not running."
+        rm -f "$PID_FILE"
+        exit 0
+    fi
+    kill "$(cat "$PID_FILE")"
+    rm -f "$PID_FILE"
+    echo "Stopped."
+    echo "Clearing GitHub bio..."
+    GITHUB_TOKEN="" gh api -X PATCH /user -f bio="" > /dev/null \
+        && echo "Bio cleared." \
+        || echo "Failed to clear bio." >&2
+}
+
+daemon_status() {
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "Running (PID $(cat "$PID_FILE"))"
+        echo ""
+        tail -5 "$LOG_FILE" 2>/dev/null
+    else
+        echo "Not running."
+    fi
+}
+
+case "$1" in
+    -h|--help)
+        cat <<EOF
+Usage: claude-pulse [options]
+
+Options:
+  (no args)        Run immediately, then loop every CLAUDE_PULSE_INTERVAL (default: 10 min)
+  -d, --start      Start as background daemon
+  --stop           Stop daemon and clear GitHub bio
+  --status         Show daemon status and last log lines
+  --loop [secs]    Run immediately, then loop every N seconds (default: CLAUDE_PULSE_INTERVAL)
+  --no-loop        Run once and exit
+  --dry-run        Show current session count without updating GitHub
+  -h, --help       Show this help
+
+Config: ~/.config/claude-pulse/config
+Logs:   $LOG_FILE
+EOF
+        ;;
+    -d|--start)
+        daemon_start
+        ;;
+    --stop)
+        daemon_stop
+        ;;
+    --status)
+        daemon_status
+        ;;
+    --dry-run)
+        if [ -f "$SESSION_FILE" ]; then
+            cat "$SESSION_FILE"
+        else
+            echo "No session file yet — start a Claude session with the hook active first."
+        fi
+        ;;
+    --no-loop)
+        run_once
+        ;;
+    --loop)
+        [ -n "$2" ] && CLAUDE_PULSE_INTERVAL="$2"
+        trap clear_bio INT TERM
+        run_once
+        echo "Looping every ${CLAUDE_PULSE_INTERVAL}s. Ctrl+C to stop."
+        while true; do
+            sleep "$CLAUDE_PULSE_INTERVAL"
+            run_once
+        done
+        ;;
+    *)
+        # Default: run immediately, then loop
+        trap clear_bio INT TERM
+        run_once
+        echo "Looping every ${CLAUDE_PULSE_INTERVAL}s. Ctrl+C to stop."
+        while true; do
+            sleep "$CLAUDE_PULSE_INTERVAL"
+            run_once
+        done
+        ;;
+esac
