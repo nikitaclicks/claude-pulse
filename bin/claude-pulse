@@ -44,8 +44,10 @@ daemon_start() {
     fi
     mkdir -p "$(dirname "$LOG_FILE")"
     nohup "$0" > "$LOG_FILE" 2>&1 &
-    echo $! > "$PID_FILE"
-    echo "Started (PID $!). Logs: $LOG_FILE"
+    PID=$!
+    disown $PID
+    echo $PID > "$PID_FILE"
+    echo "Started (PID $PID). Logs: $LOG_FILE"
 }
 
 daemon_stop() {
@@ -83,6 +85,7 @@ Options:
   -d, --start      Start as background daemon
   --stop           Stop daemon and clear GitHub bio
   --status         Show daemon status and last log lines
+  --sync           Force immediate bio update
   --loop [secs]    Run immediately, then loop every N seconds (default: CLAUDE_PULSE_INTERVAL)
   --no-loop        Run once and exit
   --dry-run        Show current session count without updating GitHub
@@ -91,6 +94,9 @@ Options:
 Config: ~/.config/claude-pulse/config
 Logs:   $LOG_FILE
 EOF
+        ;;
+    --sync)
+        run_once
         ;;
     -d|--start)
         daemon_start
