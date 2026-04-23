@@ -11,7 +11,6 @@ CLAUDE_PULSE_BIO="🤖 × \$COUNT Claude agents active"
 
 SESSION_FILE="/tmp/claude-active-sessions.txt"
 SESSION_DIR="/tmp/claude-activity"
-SESSION_STATE_DIR="$HOME/.claude/sessions"
 PID_FILE="/tmp/claude-pulse.pid"
 LOG_FILE="$HOME/.local/share/claude-pulse.log"
 
@@ -24,21 +23,18 @@ clear_bio() {
     exit 0
 }
 
-count_sessions() {
-    local count=0
-    if [ -d "$SESSION_STATE_DIR" ]; then
-        for f in "$SESSION_STATE_DIR"/*.json; do
+run_once() {
+    COUNT=0
+    if [ -d "$SESSION_DIR" ]; then
+        CUTOFF=$(($(date +%s) - 86400))
+        for f in "$SESSION_DIR"/*; do
             [ -f "$f" ] || continue
-            local pid
-            pid=$(basename "$f" .json)
-            kill -0 "$pid" 2>/dev/null && count=$((count + 1))
+            PID=$(basename "$f")
+            TS=$(cat "$f" 2>/dev/null)
+            [ -n "$TS" ] && [ "$TS" -gt "$CUTOFF" ] || continue
+            kill -0 "$PID" 2>/dev/null && COUNT=$((COUNT + 1))
         done
     fi
-    echo "$count"
-}
-
-run_once() {
-    COUNT=$(count_sessions)
 
     BIO=$(eval echo "$CLAUDE_PULSE_BIO")
     if GITHUB_TOKEN="" gh api -X PATCH /user -f bio="$BIO" > /dev/null; then
@@ -128,8 +124,11 @@ EOF
         daemon_status
         ;;
     --dry-run)
-        COUNT=$(count_sessions)
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $COUNT active Claude session(s)"
+        if [ -f "$SESSION_FILE" ]; then
+            cat "$SESSION_FILE"
+        else
+            echo "No session file yet — start a Claude session with the hook active first."
+        fi
         ;;
     --no-loop)
         run_once
