@@ -6,6 +6,7 @@
 
 # Load config (defaults first, then user config overrides)
 CLAUDE_PULSE_INTERVAL=600
+CLAUDE_PULSE_WINDOW=1800
 CLAUDE_PULSE_BIO="🤖 × \$COUNT Claude agents active"
 [ -f "$HOME/.config/claude-pulse/config" ] && source "$HOME/.config/claude-pulse/config"
 
@@ -26,7 +27,7 @@ clear_bio() {
 run_once() {
     COUNT=0
     if [ -d "$SESSION_DIR" ]; then
-        CUTOFF=$(($(date +%s) - 86400))
+        CUTOFF=$(($(date +%s) - CLAUDE_PULSE_WINDOW))
         for f in "$SESSION_DIR"/*; do
             [ -f "$f" ] || continue
             PID=$(basename "$f")

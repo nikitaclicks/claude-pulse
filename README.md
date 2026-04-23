@@ -74,15 +74,17 @@ If you prefer not to use `setup.sh`:
    chmod +x hooks/track-sessions.sh
    ```
 
-2. Register it in `~/.claude/settings.json`:
+2. Register it in `~/.claude/settings.json` (use the **absolute path** — Claude
+   Code 2.1.117+ invokes hook commands directly without a shell, so `~` is not
+   expanded and `~/.claude/...` hooks silently fail to fire):
    ```json
    {
      "hooks": {
        "UserPromptSubmit": [
-         { "hooks": [{ "type": "command", "command": "~/.claude/track-sessions.sh" }] }
+         { "hooks": [{ "type": "command", "command": "/absolute/path/to/.claude/track-sessions.sh" }] }
        ],
        "Stop": [
-         { "hooks": [{ "type": "command", "command": "~/.claude/track-sessions.sh" }] }
+         { "hooks": [{ "type": "command", "command": "/absolute/path/to/.claude/track-sessions.sh" }] }
        ]
      }
    }
