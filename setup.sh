@@ -32,27 +32,31 @@ if [ ! -f "$SETTINGS" ]; then
     echo "{}" > "$SETTINGS"
 fi
 
+# Use absolute path: Claude Code 2.1.117+ calls hook commands directly
+# without a shell, so `~/` is never expanded and tilde paths silently fail.
+HOOK_PATH="$HOME/.claude/track-sessions.sh"
+
 if ! command -v jq &> /dev/null; then
     echo ""
     echo "⚠️  jq not found — skipping automatic hook registration."
     echo "   Add the following to $SETTINGS manually:"
-    cat <<'EOF'
+    cat <<EOF
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "~/.claude/track-sessions.sh" }] }
+      { "hooks": [{ "type": "command", "command": "$HOOK_PATH" }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "~/.claude/track-sessions.sh" }] }
+      { "hooks": [{ "type": "command", "command": "$HOOK_PATH" }] }
     ]
   }
 }
 EOF
 else
-    HOOK_ENTRY='{"hooks":[{"type":"command","command":"~/.claude/track-sessions.sh"}]}'
+    HOOK_ENTRY=$(jq -n --arg cmd "$HOOK_PATH" '{hooks:[{type:"command",command:$cmd}]}')
 
     # Only add hooks if not already registered (idempotent)
-    ALREADY=$(jq '[.hooks.UserPromptSubmit // [], .hooks.Stop // []] | flatten | map(select(.hooks[]?.command == "~/.claude/track-sessions.sh")) | length' "$SETTINGS" 2>/dev/null || echo 0)
+    ALREADY=$(jq --arg cmd "$HOOK_PATH" '[.hooks.UserPromptSubmit // [], .hooks.Stop // []] | flatten | map(select(.hooks[]?.command == $cmd)) | length' "$SETTINGS" 2>/dev/null || echo 0)
     if [ "$ALREADY" -gt 0 ]; then
         echo "✓ Hooks already registered in $SETTINGS — skipping"
     else
