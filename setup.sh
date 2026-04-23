@@ -55,17 +55,30 @@ EOF
 else
     HOOK_ENTRY=$(jq -n --arg cmd "$HOOK_PATH" '{hooks:[{type:"command",command:$cmd}]}')
 
-    # Only add hooks if not already registered (idempotent)
-    ALREADY=$(jq --arg cmd "$HOOK_PATH" '[.hooks.UserPromptSubmit // [], .hooks.Stop // []] | flatten | map(select(.hooks[]?.command == $cmd)) | length' "$SETTINGS" 2>/dev/null || echo 0)
-    if [ "$ALREADY" -gt 0 ]; then
-        echo "✓ Hooks already registered in $SETTINGS — skipping"
+    # Upsert: replace any existing entry whose command normalizes (tilde →
+    # $HOME) to our absolute path, so upgrading a legacy `~/.claude/...`
+    # install gets the tilde version swapped out, not appended alongside.
+    BEFORE=$(jq '.hooks.UserPromptSubmit // [], .hooks.Stop // []' "$SETTINGS")
+    UPDATED=$(jq \
+        --arg cmd "$HOOK_PATH" \
+        --arg home "$HOME" \
+        --argjson entry "$HOOK_ENTRY" '
+      def normcmd($h): gsub("~/"; $h + "/");
+      def upsert(path):
+        getpath(path) as $cur
+        | (([$cur // [] | .[]
+             | select(([.hooks[]?.command // empty | normcmd($home)]
+                      | index($cmd) | not))])
+           + [$entry]) as $new
+        | setpath(path; $new);
+      upsert(["hooks","UserPromptSubmit"]) | upsert(["hooks","Stop"])
+    ' "$SETTINGS")
+    echo "$UPDATED" > "$SETTINGS"
+    AFTER=$(jq '.hooks.UserPromptSubmit // [], .hooks.Stop // []' "$SETTINGS")
+    if [ "$BEFORE" = "$AFTER" ]; then
+        echo "✓ Hooks already registered in $SETTINGS — no change"
     else
-        UPDATED=$(jq \
-            --argjson entry "$HOOK_ENTRY" \
-            '.hooks.UserPromptSubmit += [$entry] | .hooks.Stop += [$entry]' \
-            "$SETTINGS")
-        echo "$UPDATED" > "$SETTINGS"
-        echo "✓ Hooks registered in $SETTINGS"
+        echo "✓ Hooks registered in $SETTINGS (tilde/stale entries replaced if present)"
     fi
 fi
 
