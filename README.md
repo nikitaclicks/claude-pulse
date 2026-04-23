@@ -1,12 +1,12 @@
 # claude-pulse
 
-Broadcast your active Claude Code session count to your GitHub bio via hooks + a tiny shell CLI.
+Broadcast your active Claude Code session count to your GitHub bio via a tiny shell CLI.
 
 ```
 🤖 × 3 Claude agents active
 ```
 
-A Claude Code hook fires on every message sent and every AI response. Each session writes a heartbeat timestamp to disk. `claude-pulse` reads that state and pushes the count to your GitHub bio every 10 minutes.
+`claude-pulse` reads Claude Code's own per-session transcripts (`~/.claude/projects/*/<sid>.jsonl`) to detect which sessions are actively exchanging messages, and pushes the count to your GitHub bio every 10 minutes. No hook registration required — the daemon watches the filesystem signals Claude Code already writes.
 
 ## Quickstart
 
@@ -15,9 +15,9 @@ A Claude Code hook fires on every message sent and every AI response. Each sessi
 claude-pulse -d
 ```
 
-That's it. Your GitHub bio will update automatically as long as the daemon is running.
+That's it. Your GitHub bio will update automatically as long as the daemon is running — no Claude Code restart needed, even on first install.
 
-> **Note:** `setup.sh` requires `jq` for automatic hook registration. If you don't have it: `brew install jq`.
+> **Note:** `jq` is required (used to parse Claude Code's session state files). `brew install jq` if missing.
 
 ## Requirements
 
@@ -45,14 +45,14 @@ Daemon logs: `~/.local/share/claude-pulse.log`
 
 ## How it works
 
-1. `hooks/track-sessions.sh` is registered as a Claude Code hook for `UserPromptSubmit` and `Stop` events
-2. Each hook invocation writes a unix timestamp to `/tmp/claude-activity/<claude-pid>`
-3. `claude-pulse` counts files updated within the activity window (default: 30 min) and calls `gh api PATCH /user` to update your bio
+Claude Code keeps its own state on disk:
 
-```bash
-cat /tmp/claude-active-sessions.txt   # last recorded count + timestamp
-ls /tmp/claude-activity/              # one file per active session
-```
+- `~/.claude/sessions/<pid>.json` — one file per running session, with the `pid` and `sessionId`
+- `~/.claude/projects/<cwd-slug>/<sessionId>.jsonl` — transcript, `mtime` updates on every message exchange
+
+`claude-pulse` iterates the session files, filters to PIDs still alive, looks up each session's transcript, and counts the ones whose transcript was modified within the activity window (default: 30 min). Then it calls `gh api PATCH /user` to update the bio.
+
+No hook, no heartbeat file, no restart required — the daemon starts counting existing sessions immediately.
 
 ## Configuration
 
@@ -66,36 +66,15 @@ CLAUDE_PULSE_BIO="🤖 × \$COUNT Claude agents active"  # bio format
 
 ## Manual setup
 
-If you prefer not to use `setup.sh`:
+If you prefer not to use `setup.sh`, symlink the CLI and add it to your PATH:
 
-1. Symlink the hook:
-   ```bash
-   ln -sf "$PWD/hooks/track-sessions.sh" ~/.claude/track-sessions.sh
-   chmod +x hooks/track-sessions.sh
-   ```
+```bash
+ln -sf "$PWD/bin/claude-pulse" ~/.local/bin/claude-pulse
+chmod +x bin/claude-pulse
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+```
 
-2. Register it in `~/.claude/settings.json` (use the **absolute path** — Claude
-   Code 2.1.117+ invokes hook commands directly without a shell, so `~` is not
-   expanded and `~/.claude/...` hooks silently fail to fire):
-   ```json
-   {
-     "hooks": {
-       "UserPromptSubmit": [
-         { "hooks": [{ "type": "command", "command": "/absolute/path/to/.claude/track-sessions.sh" }] }
-       ],
-       "Stop": [
-         { "hooks": [{ "type": "command", "command": "/absolute/path/to/.claude/track-sessions.sh" }] }
-       ]
-     }
-   }
-   ```
-
-3. Symlink the CLI and add it to your PATH:
-   ```bash
-   ln -sf "$PWD/bin/claude-pulse" ~/.local/bin/claude-pulse
-   chmod +x bin/claude-pulse
-   echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
-   ```
+Optionally copy `config.default` to `~/.config/claude-pulse/config` and edit.
 
 ## License
 

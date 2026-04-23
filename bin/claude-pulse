@@ -12,6 +12,8 @@ CLAUDE_PULSE_BIO="🤖 × \$COUNT Claude agents active"
 
 SESSION_FILE="/tmp/claude-active-sessions.txt"
 SESSION_DIR="/tmp/claude-activity"
+CLAUDE_SESSIONS_DIR="$HOME/.claude/sessions"
+CLAUDE_PROJECTS_DIR="$HOME/.claude/projects"
 PID_FILE="/tmp/claude-pulse.pid"
 LOG_FILE="$HOME/.local/share/claude-pulse.log"
 
@@ -24,18 +26,36 @@ clear_bio() {
     exit 0
 }
 
+# Count active Claude sessions by observing Claude Code's own state:
+#   ~/.claude/sessions/<pid>.json        → pid + sessionId for every session
+#   ~/.claude/projects/<dir>/<sid>.jsonl → conversation transcript, mtime
+#                                          updates on every message exchange
+# Active ≝ process still alive AND transcript modified within CLAUDE_PULSE_WINDOW.
+# Works without any hook registration, so existing sessions count immediately —
+# no restart needed — and there's no risk of a hook-path regression.
+count_sessions() {
+    local count=0
+    local cutoff=$(($(date +%s) - CLAUDE_PULSE_WINDOW))
+    [ -d "$CLAUDE_SESSIONS_DIR" ] && [ -d "$CLAUDE_PROJECTS_DIR" ] || { echo 0; return; }
+    command -v jq >/dev/null 2>&1 || { echo 0; return; }
+
+    for f in "$CLAUDE_SESSIONS_DIR"/*.json; do
+        [ -f "$f" ] || continue
+        local pid sid jsonl mtime
+        pid=$(basename "$f" .json)
+        kill -0 "$pid" 2>/dev/null || continue
+        sid=$(jq -r '.sessionId // empty' "$f" 2>/dev/null)
+        [ -z "$sid" ] && continue
+        jsonl=$(find "$CLAUDE_PROJECTS_DIR" -maxdepth 2 -name "${sid}.jsonl" 2>/dev/null | head -1)
+        [ -z "$jsonl" ] && continue
+        mtime=$(stat -f %m "$jsonl" 2>/dev/null)
+        [ -n "$mtime" ] && [ "$mtime" -gt "$cutoff" ] && count=$((count + 1))
+    done
+    echo "$count"
+}
+
 run_once() {
-    COUNT=0
-    if [ -d "$SESSION_DIR" ]; then
-        CUTOFF=$(($(date +%s) - CLAUDE_PULSE_WINDOW))
-        for f in "$SESSION_DIR"/*; do
-            [ -f "$f" ] || continue
-            PID=$(basename "$f")
-            TS=$(cat "$f" 2>/dev/null)
-            [ -n "$TS" ] && [ "$TS" -gt "$CUTOFF" ] || continue
-            kill -0 "$PID" 2>/dev/null && COUNT=$((COUNT + 1))
-        done
-    fi
+    COUNT=$(count_sessions)
 
     BIO=$(eval echo "$CLAUDE_PULSE_BIO")
     if GITHUB_TOKEN="" gh api -X PATCH /user -f bio="$BIO" > /dev/null; then
@@ -125,11 +145,7 @@ EOF
         daemon_status
         ;;
     --dry-run)
-        if [ -f "$SESSION_FILE" ]; then
-            cat "$SESSION_FILE"
-        else
-            echo "No session file yet — start a Claude session with the hook active first."
-        fi
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $(count_sessions) active Claude session(s)"
         ;;
     --no-loop)
         run_once

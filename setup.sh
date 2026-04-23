@@ -6,18 +6,13 @@ SETTINGS="$HOME/.claude/settings.json"
 
 echo "Setting up claude-pulse..."
 
-# 1. Install hook script
-ln -sf "$SCRIPT_DIR/hooks/track-sessions.sh" "$HOME/.claude/track-sessions.sh"
-chmod +x "$SCRIPT_DIR/hooks/track-sessions.sh"
-echo "✓ Hook symlinked at ~/.claude/track-sessions.sh"
-
-# 2. Install CLI
+# 1. Install CLI
 mkdir -p "$HOME/.local/bin"
 ln -sf "$SCRIPT_DIR/bin/claude-pulse" "$HOME/.local/bin/claude-pulse"
 chmod +x "$SCRIPT_DIR/bin/claude-pulse"
 echo "✓ CLI symlinked at ~/.local/bin/claude-pulse"
 
-# 3. Install default config (skip if user already has one)
+# 2. Install default config (skip if user already has one)
 CONFIG_DIR="$HOME/.config/claude-pulse"
 mkdir -p "$CONFIG_DIR"
 if [ ! -f "$CONFIG_DIR/config" ]; then
@@ -27,62 +22,31 @@ else
     echo "✓ Config already exists at ~/.config/claude-pulse/config — skipping"
 fi
 
-# 4. Patch ~/.claude/settings.json
-if [ ! -f "$SETTINGS" ]; then
-    echo "{}" > "$SETTINGS"
-fi
-
-# Use absolute path: Claude Code 2.1.117+ calls hook commands directly
-# without a shell, so `~/` is never expanded and tilde paths silently fail.
-HOOK_PATH="$HOME/.claude/track-sessions.sh"
-
-if ! command -v jq &> /dev/null; then
-    echo ""
-    echo "⚠️  jq not found — skipping automatic hook registration."
-    echo "   Add the following to $SETTINGS manually:"
-    cat <<EOF
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "$HOOK_PATH" }] }
-    ],
-    "Stop": [
-      { "hooks": [{ "type": "command", "command": "$HOOK_PATH" }] }
-    ]
-  }
-}
-EOF
-else
-    HOOK_ENTRY=$(jq -n --arg cmd "$HOOK_PATH" '{hooks:[{type:"command",command:$cmd}]}')
-
-    # Upsert: replace any existing entry whose command normalizes (tilde →
-    # $HOME) to our absolute path, so upgrading a legacy `~/.claude/...`
-    # install gets the tilde version swapped out, not appended alongside.
-    BEFORE=$(jq '.hooks.UserPromptSubmit // [], .hooks.Stop // []' "$SETTINGS")
-    UPDATED=$(jq \
-        --arg cmd "$HOOK_PATH" \
-        --arg home "$HOME" \
-        --argjson entry "$HOOK_ENTRY" '
-      def normcmd($h): gsub("~/"; $h + "/");
-      def upsert(path):
-        getpath(path) as $cur
-        | (([$cur // [] | .[]
-             | select(([.hooks[]?.command // empty | normcmd($home)]
-                      | index($cmd) | not))])
-           + [$entry]) as $new
-        | setpath(path; $new);
-      upsert(["hooks","UserPromptSubmit"]) | upsert(["hooks","Stop"])
+# 3. Unregister legacy track-sessions.sh hook entries if upgrading — the new
+# counter reads Claude Code's own per-session transcript mtime directly and
+# no longer needs a hook (which also sidesteps the 2.1.117 tilde-expansion
+# regression in Claude Code's hook runner).
+if command -v jq &> /dev/null && [ -f "$SETTINGS" ]; then
+    BEFORE=$(jq '.hooks // {}' "$SETTINGS" 2>/dev/null || echo '{}')
+    UPDATED=$(jq '
+      def strip_track_sessions:
+        map(
+          .hooks |= map(select((.command // "") | test("track-sessions\\.sh$") | not))
+        )
+        | map(select((.hooks // []) | length > 0));
+      if .hooks then
+        .hooks.UserPromptSubmit |= (if . then strip_track_sessions else . end)
+        | .hooks.Stop           |= (if . then strip_track_sessions else . end)
+      else . end
     ' "$SETTINGS")
     echo "$UPDATED" > "$SETTINGS"
-    AFTER=$(jq '.hooks.UserPromptSubmit // [], .hooks.Stop // []' "$SETTINGS")
-    if [ "$BEFORE" = "$AFTER" ]; then
-        echo "✓ Hooks already registered in $SETTINGS — no change"
-    else
-        echo "✓ Hooks registered in $SETTINGS (tilde/stale entries replaced if present)"
+    AFTER=$(jq '.hooks // {}' "$SETTINGS")
+    if [ "$BEFORE" != "$AFTER" ]; then
+        echo "✓ Removed legacy track-sessions hook from $SETTINGS (no longer needed)"
     fi
 fi
 
-# 5. PATH reminder
+# 4. PATH reminder
 if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
     echo ""
     echo "⚠️  ~/.local/bin is not in your PATH."
@@ -90,9 +54,9 @@ if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
     echo '   export PATH="$HOME/.local/bin:$PATH"'
 fi
 
-# 6. GitHub auth reminder
+# 5. GitHub auth reminder
 echo ""
 echo "Almost done! Authorize GitHub CLI with the 'user' scope:"
 echo "  unset GITHUB_TOKEN && gh auth refresh -h github.com -s user"
 echo ""
-echo "Then restart Claude Code and run: claude-pulse --dry-run"
+echo "Then run: claude-pulse --dry-run"
