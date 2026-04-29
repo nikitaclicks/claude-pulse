@@ -4,8 +4,17 @@
 # How long a session stays "active" after its last message (seconds)
 CLAUDE_PULSE_WINDOW=1800   # 30 minutes
 
-# How often claude-status pushes to GitHub bio (seconds)
+# How often claude-pulse pushes to GitHub bio (seconds)
 CLAUDE_PULSE_INTERVAL=600  # 10 minutes
 
-# GitHub bio format — $COUNT is replaced with the active session count
-CLAUDE_PULSE_BIO="🤖 × \$COUNT Claude agents active"
+# Space-separated agent providers to count: claude, cursor, copilot
+CLAUDE_PULSE_AGENTS="claude cursor copilot"
+
+# GitHub bio format. Available variables: $COUNT, $CLAUDE_COUNT, $CURSOR_COUNT, $COPILOT_COUNT
+CLAUDE_PULSE_BIO="🤖 × \$COUNT coding agents active"
+
+# Optional provider state directory overrides
+CLAUDE_PULSE_CLAUDE_SESSIONS_DIR="$HOME/.claude/sessions"
+CLAUDE_PULSE_CLAUDE_PROJECTS_DIR="$HOME/.claude/projects"
+CLAUDE_PULSE_CURSOR_PROJECTS_DIR="$HOME/.cursor/projects"
+CLAUDE_PULSE_COPILOT_SESSIONS_DIR="$HOME/.copilot/session-state"
